@@ -1,68 +1,46 @@
---[[
-  Ported from Enceladus (PS2 homebrew Lua) to LOVE2D.
-
-  Original used a single `while true do ... Screen.flip() end` loop that ran
-  once per PAL vblank (~50Hz). LOVE2D instead calls love.load() once,
-  then love.update(dt) and love.draw() every frame at whatever framerate
-  the machine achieves. To keep gameplay speed identical regardless of
-  framerate, every "per frame" constant from the original (speed, cloudSpeed,
-  food fall speed) has been converted to a "per second" value (multiplied
-  by the original ~50fps PAL refresh rate) and is now scaled by dt.
-
-  Put your original image assets (SL.png, SL2.png, GRASS.PNG, BG.PNG,
-  CLOUDS.PNG, ORANGE.PNG, BOMB.PNG) in the same folder as this file.
-  NOTE: LOVE2D on Linux/macOS is case-sensitive about filenames - make sure
-  the actual files match the case used below exactly.
---]]
-
-local PAL_FPS = 50 -- original fixed vblank rate, used to convert old per-frame values to per-second
-
---[[
-  RESOLUTION SCALING
-  All game logic below still uses the original 640x512 coordinate space
-  (so collision boxes, the grass y=448 placement, etc. all keep working
-  unmodified). At draw time we stretch that 640x512 "virtual screen" to
-  completely fill whatever the real screen size is - 800x240 (3DS top
-  screen 3D framebuffer), 400x240 (3DS top screen 2D), a desktop window,
-  or anything else. This is a full stretch (separate X/Y scale factors),
-  NOT an aspect-preserving letterbox, so there are no black bars and the
-  whole framebuffer is always used - the image will look squashed/stretched
-  on screens with a very different aspect ratio than 640x512, since nothing
-  is cropped or padded.
---]]
-local VIRTUAL_W, VIRTUAL_H = 640, 512
-local scaleX, scaleY = 1, 1
+local Multiplier = 50
+local VIRTUAL_H = 512
+local COLUMN_W = 640
+local scale = 1
+local visibleW = 640
+local columnOffsetX = 0
 
 local function recalcScale()
     local realW, realH = love.graphics.getDimensions()
-    scaleX = realW / VIRTUAL_W
-    scaleY = realH / VIRTUAL_H
+    scale = realH / VIRTUAL_H
+    visibleW = realW / scale
+    columnOffsetX = (visibleW - COLUMN_W) / 2
 end
 
--- Fires on desktop LOVE when the window is resized. Not guaranteed to fire
--- on console, so love.load() also calls recalcScale() once directly.
 function love.resize(w, h)
     recalcScale()
 end
 
--- assets / state (populated in love.load)
+local function drawTiled(image, y, startX, endX, offset)
+    offset = offset or 0
+    local iw = image:getWidth()
+    local firstX = math.floor((startX - offset) / iw) * iw + offset
+    for tx = firstX, endX, iw do
+        love.graphics.draw(image, tx, y)
+    end
+end
+
 local font
 local sealion, sealion_eat, player
 local grass, background, clouds, orange, bomb
 local points = 0
-local speed = 5 * PAL_FPS       -- was 5 px/frame -> 250 px/sec
-local cloudSpeed = 0.2 * PAL_FPS -- was 0.2 px/frame -> 10 px/sec
+local speed = 5 * Multiplier
+local cloudSpeed = 0.2 * Multiplier
 local x, y = 160, 352
 local cloudX = 0
 local food = {}
 
-local spawnTimer = 0      -- counts up in seconds, replaces Timer.new()/getTime()
-local spawnInterval = 2   -- was 2000000 microseconds = 2 seconds
+local spawnTimer = 0
+local spawnInterval = 2
 
-local eatTimer = nil      -- replaces timer2; nil when not active
-local eatDuration = 0.5   -- was 500000 microseconds = 0.5 seconds
+local eatTimer = nil
+local eatDuration = 0.5
 
--- joystick reference for rumble (Pads.rumble equivalent)
 local joystick = nil
 
 local function getJoystick()
@@ -71,20 +49,11 @@ local function getJoystick()
     return list[1]
 end
 
--- Enceladus: Pads.rumble(0, 255, 255) uses big/small motor 0-255 amplitude
--- LOVE2D: joystick:setVibration(left, right, [duration]) expects 0-1 floats
--- Wrapped in pcall: not every device/console has a vibration motor
--- (original 3DS has none; New 3DS only via the Rumble Pak accessory).
 local function rumble(big, small)
     if not joystick then return end
     pcall(function() joystick:setVibration(big / 255, small / 255) end)
 end
 
--- The 3DS has no physical keyboard, so movement checks both keyboard
--- (for desktop LOVE testing) and gamepad D-Pad/Circle Pad (for LOVE Potion
--- on console). LOVE Potion maps 3DS buttons through love.joystick as a
--- standard gamepad ("dpleft"/"dpright"); double check LOVE Potion's current
--- input docs if these names don't match what you see on your build.
 local function isMoveLeft()
     if love.keyboard and love.keyboard.isDown and love.keyboard.isDown("left", "a") then
         return true
@@ -113,8 +82,8 @@ local function spawnFood()
         { food = bomb,   value = -100 },
     }
     local chosenFood = availableFood[math.random(1, #availableFood)]
-    local foodX = math.random(0, 576)
-    local foodSpeed = math.random(3, 4) * PAL_FPS -- was 3-4 px/frame -> per second
+    local foodX = math.random(0, COLUMN_W - 64)
+    local foodSpeed = math.random(3, 4) * Multiplier
 
     table.insert(food, {
         item = chosenFood.food,
@@ -140,7 +109,6 @@ function love.load()
 
     joystick = getJoystick()
 
-    -- Font.fmLoad() -> use LOVE2D's built-in default font at a reasonable size
     font = love.graphics.newFont(16)
     love.graphics.setFont(font)
 
@@ -158,28 +126,25 @@ function love.load()
 end
 
 function love.update(dt)
-    -- Pads.check(pad, PAD_LEFT / PAD_RIGHT) -> keyboard/gamepad equivalent
     if isMoveLeft() then
         x = math.max(0, x - speed * dt)
     end
     if isMoveRight() then
-        x = math.min(480, x + speed * dt)
+        x = math.min(COLUMN_W - 160, x + speed * dt)
     end
 
-    -- food spawn timer (replaces Timer.new()/Timer.getTime())
     spawnTimer = spawnTimer + dt
     if spawnTimer >= spawnInterval then
         spawnFood()
         spawnTimer = 0
     end
 
-    -- cloud scroll
     cloudX = cloudX + cloudSpeed * dt
-    if cloudX >= 640 then
-        cloudX = 0
+    local cloudsW = clouds:getWidth()
+    if cloudX >= cloudsW then
+        cloudX = cloudX - cloudsW
     end
 
-    -- falling food + collision
     for i = #food, 1, -1 do
         local v = food[i]
         v.y = v.y + v.speed * dt
@@ -197,7 +162,6 @@ function love.update(dt)
         end
     end
 
-    -- "yummy" face timer (replaces timer2)
     if eatTimer then
         eatTimer = eatTimer + dt
         if eatTimer >= eatDuration then
@@ -208,33 +172,35 @@ function love.update(dt)
     end
 end
 
-function love.draw()
+function love.draw(screen)
+    if screen == "bottom" then
+        love.graphics.clear(0, 0, 0)
+        return
+    end
+
+    recalcScale()
+
     love.graphics.push()
-    love.graphics.scale(scaleX, scaleY)
+    love.graphics.scale(scale, scale)
 
-    -- Everything from here down is drawn in the original 640x512
-    -- coordinate space, unchanged from the original PS2 code's math.
-    love.graphics.draw(background, 0, 0)
+    drawTiled(background, 0, 0, visibleW)
 
-    -- Graphics.drawScaleImage(player, x, y, 160, 160) scaled the sprite to a
-    -- 160x160 box; LOVE2D draw() takes scale multipliers, not target pixel
-    -- sizes, so we compute the multiplier from the image's real dimensions.
     local pw, ph = player:getDimensions()
-    love.graphics.draw(player, x, y, 0, 160 / pw, 160 / ph)
+    love.graphics.draw(player, columnOffsetX + x, y, 0, 160 / pw, 160 / ph)
 
     love.graphics.print("Points: " .. points, 10, 10)
     if player == sealion_eat then
-        love.graphics.print("yummy!", math.min(x + 160, 560), y)
+        local yummyX = math.min(columnOffsetX + x + 160, visibleW - 80)
+        love.graphics.print("yummy!", yummyX, y)
     end
 
-    love.graphics.draw(clouds, cloudX - 640, 0)
-    love.graphics.draw(clouds, cloudX, 0)
+    drawTiled(clouds, 0, 0, visibleW, cloudX)
 
     for _, v in ipairs(food) do
-        love.graphics.draw(v.item, v.x, v.y)
+        love.graphics.draw(v.item, columnOffsetX + v.x, v.y)
     end
 
-    love.graphics.draw(grass, 0, 448)
+    love.graphics.draw(grass, columnOffsetX, 448)
 
     love.graphics.pop()
 end
