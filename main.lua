@@ -144,15 +144,15 @@ function love.load()
     font = love.graphics.newFont(16)
     love.graphics.setFont(font)
 
-    sealion     = love.graphics.newImage("SL.png")
-    sealion_eat = love.graphics.newImage("SL2.png")
+    sealion     = love.graphics.newImage("sl.png")
+    sealion_eat = love.graphics.newImage("sl2.png")
     player      = sealion
 
-    grass      = love.graphics.newImage("GRASS.PNG")
-    background = love.graphics.newImage("BG.PNG")
-    clouds     = love.graphics.newImage("CLOUDS.PNG")
-    orange     = love.graphics.newImage("ORANGE.PNG")
-    bomb       = love.graphics.newImage("BOMB.PNG")
+    grass      = love.graphics.newImage("grass.png")
+    background = love.graphics.newImage("bg.png")
+    clouds     = love.graphics.newImage("clouds.png")
+    orange     = love.graphics.newImage("orange.png")
+    bomb       = love.graphics.newImage("bomb.png")
 
     recalcScale()
 end
